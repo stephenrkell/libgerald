@@ -1,0 +1,489 @@
+Hooking into the glibc build process.
+
+ The glibc ld.so is built from a big object called librtld.os.
+ This itself is built by creating a big object, dl-allobjs.os,
+ from the various files in the elf/ directory that define rtld.
+ We then complete their dependencies by pulling in fresh builds
+ of various library objects from the main libc. The objects are
+ selected by a sed script run on the link map output of linking
+ dl-allobjs.os against libc_pic.a. Then the pulled-in objects 
+ are rebuilt with some special flags set (NOT_IN_libc, etc.),
+ to ensure the objects are suitable for running inside the ld.so.
+ We do not use libc_pic.a in the final build of the ld.so.
+ 
+ Builds are very fragile w.r.t. what libc modules are included in librtld.os.
+ Not all things can be pulled in without error.
+ E.g. we need to avoid 'init-first' from being included.
+ On my vanilla build, I get the following content in librtld.mk
+rtld-csu +=check_fds.os
+rtld-csu +=errno.os
+rtld-setjmp +=setjmp.os
+rtld-setjmp +=__longjmp.os
+rtld-string +=strchr.os
+rtld-string +=strcmp.os
+rtld-string +=strcpy.os
+rtld-string +=strlen.os
+rtld-string +=strnlen.os
+rtld-string +=memchr.os
+rtld-string +=memcmp.os
+rtld-string +=memmove.os
+rtld-string +=memset.os
+rtld-string +=mempcpy.os
+rtld-string +=stpcpy.os
+rtld-string +=memcpy.os
+rtld-string +=wordcopy.os
+rtld-string +=rawmemchr.os
+rtld-string +=strcmp-ssse3.os
+rtld-string +=strcmp-sse2-unaligned.os
+rtld-string +=memcmp-sse4.os
+rtld-string +=memcpy-ssse3.os
+rtld-string +=memcpy-sse2-unaligned.os
+rtld-string +=mempcpy-ssse3.os
+rtld-string +=memmove-ssse3.os
+rtld-string +=mempcpy-ssse3-back.os
+rtld-string +=memmove-ssse3-back.os
+rtld-string +=strcpy-ssse3.os
+rtld-string +=stpcpy-ssse3.os
+rtld-string +=strcpy-sse2-unaligned.os
+rtld-string +=stpcpy-sse2-unaligned.os
+rtld-string +=strchr-sse2-no-bsf.os
+rtld-string +=memcmp-ssse3.os
+rtld-string +=cacheinfo.os
+rtld-dirent +=closedir.os
+rtld-dirent +=readdir.os
+rtld-dirent +=rewinddir.os
+rtld-dirent +=getdents.os
+rtld-dirent +=fdopendir.os
+rtld-posix +=uname.os
+rtld-posix +=_exit.os
+rtld-posix +=getpid.os
+rtld-posix +=environ.os
+rtld-io +=xstat.os
+rtld-io +=fxstat.os
+rtld-io +=lxstat.os
+rtld-io +=open.os
+rtld-io +=read.os
+rtld-io +=write.os
+rtld-io +=access.os
+rtld-io +=fcntl.os
+rtld-io +=close.os
+rtld-misc +=mmap.os
+rtld-misc +=munmap.os
+rtld-misc +=mprotect.os
+rtld-misc +=llseek.os
+rtld-gmon +=profil.os
+rtld-gmon +=prof-freq.os
+rtld-nptl +=libc-lowlevellock.os
+rtld-nptl +=libc-cancellation.os
+rtld-nptl +=libc_multiple_threads.os
+rtld-csu +=init-arch.os
+rtld-signal +=sigaction.os
+rtld-time +=setitimer.os
+rtld-nptl +=forward.os
+rtld-stdlib +=exit.os
+rtld-stdlib +=cxa_atexit.os
+rtld-stdlib +=cxa_thread_atexit_impl.os
+rtld-subdirs = csu dirent gmon io misc nptl posix setjmp signal stdlib string time
+
+ and all this gets made as follows:
+gcc   -nostdlib -nostartfiles -r -o /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.map.o '-Wl,-(' /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/dl-allobjs.os /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/libc_pic.a -lgcc '-Wl,-)' -Wl,-Map,/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mapT
+rm -f /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.map.o
+mv -f /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mapT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.map
+LC_ALL=C \
+sed -n 's@^/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/\([^(]*\)(\([^)]*\.os\)) *.*$@\1 \2@p' \
+    /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.map | \
+while read lib file; do \
+  case $lib in \
+  libc_pic.a) \
+    LC_ALL=C fgrep -l /$file \
+          /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/stamp.os /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/*/stamp.os | \
+    LC_ALL=C \
+    sed 's@^/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/\([^/]*\)/stamp\.os$@rtld-\1'" +=$file@"\
+    ;; \
+  */*.a) \
+    echo rtld-${lib%%/*} += $file ;; \
+  *) echo "Wasn't expecting $lib($file)" >&2; exit 1 ;; \
+  esac; \
+done > /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mkT
+echo rtld-subdirs = `LC_ALL=C sed 's/^rtld-\([^ ]*\).*$/\1/' /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mkT \
+                     | LC_ALL=C sort -u` >> /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mkT
+mv -f /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mkT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.mk
+
+ i.e. we link against libc_pic.a and look at the map that comes out;
+ we then list the .o files that we need.
+ My build of dl-allobjs.os has the following UNDs (omitting some uninteresting .hiddens).
+ which are pulled out of libc_pic.a.
+.hidden _environ
+.hidden rtld_errno
+__GI___fxstat64
+__GI___lxstat64
+__GI___xstat64
+__access
+__close
+__closedir
+__fcntl
+__fdopendir
+__getpid
+__libc_check_standard_fds
+__libc_read
+__libc_write
+__longjmp
+__lseek
+__mmap
+__mprotect
+__munmap
+__open
+__profil
+__profile_frequency
+__read
+__readdir
+__sigsetjmp
+__uname
+_exit
+memchr
+memcmp
+memcpy
+memmove
+mempcpy
+memset
+rawmemchr
+rewinddir
+stpcpy
+strchr
+strcmp
+strcpy
+strlen
+strnlen
+
+ What goes into dl-allobjs.os? It's most, but not all, of the dl-* objs.
+ In particular, dl-support.os does *not* go in.
+ gcc   -nostdlib -nostartfiles -r -o dl-allobjs.os \
+ rtld.os dl-load.os dl-lookup.os dl-object.os dl-reloc.os dl-deps.os dl-hwcaps.os \
+ dl-runtime.os dl-error.os dl-init.os dl-fini.os dl-debug.os dl-misc.os dl-version.os \
+ dl-profile.os dl-conflict.os dl-tls.os dl-origin.os dl-scope.os dl-execstack.os dl-caller.os \
+ dl-open.os dl-close.os dl-trampoline.os dl-cache.os dl-sysdep.os dl-environ.os dl-minimal.os \
+ dl-brk.os dl-sbrk.os dl-getcwd.os dl-openat64.os dl-opendir.os dl-fxstatat64.os tlsdesc.os \
+ dl-tlsdesc.os
+
+ Getting there: now I'm getting strcmp and strlen problems.
+ 
+gcc   -nostdlib -nostartfiles -r -o build/elf/librtld.os '-Wl,-(' build/elf/dl-allobjs.os build/elf/rtld-libc.a -lgcc '-Wl,-)' \
+          -Wl,-Map,build/elf/librtld.os.map
+gcc   -nostdlib -nostartfiles -shared -o build/elf/ld.so.new                \
+          -Wl,-z,combreloc -Wl,-z,relro -Wl,--hash-style=both -Wl,-z,defs       \
+          build/elf/librtld.os -Wl,--version-script=build/ld.map        \
+          -Wl,-soname=ld-linux-x86-64.so.2                      \
+          -Wl,-defsym=_begin=0
+/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.os: In function `is_elf_interpreter':
+/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/elf/../sysdeps/pthread/../../../../../src/preload.c:379: undefined reference to `__GI_strcmp'
+/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.os: In function `dir_cb_resolve_and_exec':
+/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/elf/../sysdeps/pthread/../../../../../src/preload.c:655: undefined reference to `__GI_strlen'
+/usr/local/bin/ld.bfd: /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/librtld.os: relocation R_X86_64_PC32 against undefined symbol `__GI_strlen' can not be used when making a shared object; recompile with -fPIC
+/usr/local/bin/ld.bfd: final link failed: Bad value
+
+ ... because somehow the librtld.os is getting UNDs to the __GI_-prefixed str{chr,cmp,len}.
+ AHA. NOTE that librtld.os is *including* our preload.o!
+ Is the problem something about how
+ our code is not in dl-allobjs.os,
+ but rather is in   librtld.os,
+ and the two are linked differently?
+ In fact by the time our code gets into librtld.os,
+ its strcmp relocs have changed into __GI_*, but *only* in the code from our preload module!
+ That's weird.
+ AHA. Actually our code *does* get into dl-allobjs.os, too, which librtld.os includes.
+ AHA. We have preload.os! And that has __GI_strcmp! How does it get made?
+ AHA. Our Makefile makes it, by copying from the .o.
+ HMM: something weird here: if we don't make the .os file, does glibc make it?
+ YES! It makes it for us. And it does weird things. So how is it built? From the elf/ dir, like so:
+gcc ../sysdeps/pthread/../../../../../src/preload.c -c -std=gnu99 
+-fgnu89-inline  -O2 -Wall -Winline -Wwrite-strings -fmerge-all-constants -frounding-math 
+-g -Wstrict-prototypes   -fPIC        
+-I../include 
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf  
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build  
+-I../sysdeps/unix/sysv/linux/x86_64/64/nptl  
+-I../sysdeps/unix/sysv/linux/x86_64/64  
+-I../nptl/sysdeps/unix/sysv/linux/x86_64  
+-I../nptl/sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86_64  
+-I../sysdeps/unix/sysv/linux/wordsize-64  
+-I../nptl/sysdeps/unix/sysv/linux  
+-I../nptl/sysdeps/pthread  
+-I../sysdeps/pthread  
+-I../ports/sysdeps/unix/sysv/linux  
+-I../sysdeps/unix/sysv/linux  
+-I../sysdeps/gnu  
+-I../sysdeps/unix/inet  
+-I../nptl/sysdeps/unix/sysv  
+-I../ports/sysdeps/unix/sysv  
+-I../sysdeps/unix/sysv  
+-I../sysdeps/unix/x86_64  
+-I../nptl/sysdeps/unix  
+-I../ports/sysdeps/unix  
+-I../sysdeps/unix  
+-I../sysdeps/posix  
+-I../nptl/sysdeps/x86_64/64  
+-I../sysdeps/x86_64/64  
+-I../sysdeps/x86_64/fpu/multiarch  
+-I../sysdeps/x86_64/fpu  
+-I../sysdeps/x86/fpu  
+-I../sysdeps/x86_64/multiarch  
+-I../nptl/sysdeps/x86_64  
+-I../sysdeps/x86_64  
+-I../sysdeps/x86  
+-I../sysdeps/ieee754/ldbl-96  
+-I../sysdeps/ieee754/dbl-64/wordsize-64  
+-I../sysdeps/ieee754/dbl-64  
+-I../sysdeps/ieee754/flt-32  
+-I../sysdeps/wordsize-64  
+-I../sysdeps/ieee754  
+-I../sysdeps/generic  
+-I../nptl  
+-I../ports  
+-I.. 
+-I../libio 
+-I.   
+-D_LIBC_REENTRANT 
+-include ../include/libc-symbols.h  
+-DPIC -DSHARED      
+-o /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/../../../../../src/preload.os 
+-MD -MP 
+-MF /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/../../../../../src/preload.os.dt 
+-MT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/../../../../../src/preload.os
+
+ ... so why do we get __GI_-prefixed stuff coming out? Compare to dl-load.os, which is built with
+gcc dl-load.c -c -std=gnu99 -fgnu89-inline  -O2 -Wall -Winline -Wwrite-strings 
+-fmerge-all-constants -frounding-math -g -Wstrict-prototypes   -fPIC  -mno-sse -mno-mmx       
+-I../include 
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf  
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build  
+-I../sysdeps/unix/sysv/linux/x86_64/64/nptl  
+-I../sysdeps/unix/sysv/linux/x86_64/64  
+-I../nptl/sysdeps/unix/sysv/linux/x86_64  
+-I../nptl/sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86_64  
+-I../sysdeps/unix/sysv/linux/wordsize-64  
+-I../nptl/sysdeps/unix/sysv/linux  
+-I../nptl/sysdeps/pthread  
+-I../sysdeps/pthread  
+-I../ports/sysdeps/unix/sysv/linux  
+-I../sysdeps/unix/sysv/linux  
+-I../sysdeps/gnu  
+-I../sysdeps/unix/inet  
+-I../nptl/sysdeps/unix/sysv  
+-I../ports/sysdeps/unix/sysv  
+-I../sysdeps/unix/sysv  
+-I../sysdeps/unix/x86_64  
+-I../nptl/sysdeps/unix  
+-I../ports/sysdeps/unix  
+-I../sysdeps/unix  
+-I../sysdeps/posix  
+-I../nptl/sysdeps/x86_64/64  
+-I../sysdeps/x86_64/64  
+-I../sysdeps/x86_64/fpu/multiarch  
+-I../sysdeps/x86_64/fpu  
+-I../sysdeps/x86/fpu  
+-I../sysdeps/x86_64/multiarch  
+-I../nptl/sysdeps/x86_64  
+-I../sysdeps/x86_64  
+-I../sysdeps/x86  
+-I../sysdeps/ieee754/ldbl-96  
+-I../sysdeps/ieee754/dbl-64/wordsize-64  
+-I../sysdeps/ieee754/dbl-64  
+-I../sysdeps/ieee754/flt-32  
+-I../sysdeps/wordsize-64  
+-I../sysdeps/ieee754  
+-I../sysdeps/generic  
+-I../nptl  
+-I../ports  
+-I.. 
+-I../libio 
+-I.   
+-D_LIBC_REENTRANT 
+-include ../include/libc-symbols.h  
+-DPIC -DSHARED  -DNOT_IN_libc=1 -DIS_IN_rtld=1 -DIN_LIB=rtld  
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/. 
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/csu/.   
+-o /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/dl-load.os 
+-MD -MP 
+-MF /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/dl-load.os.dt 
+-MT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/elf/dl-load.os
+
+ Relevantly, in elf/Makefile:
+CPPFLAGS-.os += $(if $(filter $(@F),$(patsubst %,%.os,$(all-rtld-routines))),\
+		     -DNOT_IN_libc=1 -DIS_IN_rtld=1 -DIN_LIB=rtld)
+ and in Makeconfig
+CPPFLAGS = $(CPPUNDEFS) $(CPPFLAGS-config) $($(subdir)-CPPFLAGS) \
+	   $(+includes) $(defines) \
+	   -include $(..)include/libc-symbols.h $(sysdep-CPPFLAGS) \
+	   $(CPPFLAGS-$(suffix $@)) \
+	   $(foreach lib,$(libof-$(basename $(@F))) \
+			 $(libof-$(<F)) $(libof-$(@F)),$(CPPFLAGS-$(lib))) \
+	   $(CPPFLAGS-$(<F)) $(CPPFLAGS-$(@F)) $(CPPFLAGS-$(basename $(@F)))
+ i.e. the glibc build system lets us attach CPPFLAGS
+ to various subranges of a filename: the suffix,
+ the input filename's basename, the output filename's basename,
+ and -$(<F) and -$(@F) which really ought also to be the basenames?
+ AHA. So the problem is with the use of basenames.
+ $(patsubst %,%.os,$(all-rtld-routines))  includes ../../../../../src/preload.os
+ and when we do $(filter $(@F),../../../../../src/preload.os),
+ since @F is simply "preload.os", we don't include it in the filter.
+ Instead of all the ../s, 
+ consider vpath'ing our current dir for *.c.
+
+ Okay, now that works and we get compiled with the same flags
+ as dl-load.c or whatever. But we still aren't pulling in the
+ stuff we expect to pull in. Specifically, I can't see why we
+ shouldn't pull in strncpy or stpncpy, but neither can be pulled in.
+ HMM. On inspection, we do have modules rtld-strncpy.os and rtld-stpncpy.os in rtld-libc.a,
+ but they do not define any symbols.
+ HMM. So what is in stpncpy.o?
+ it has a weak IFUNC stpncpy and strong IFUNC __stpncpy.
+ HMM. Maybe the ifunc stuff is messing us up?
+ Okay, worked example.
+ dl-getcwd uses strcpy, and has an UND ref to strcpy.
+ rtld-strcpy.os included in rtld-libc.a has a real non-IFUNC strcpy
+ EVEN THOUGH strcpy in strcpy.o is an IFUNC -- but there is a __GI_strcpy (pointing at the SSE2 ver)
+ How does the non-IFUNC strcpy get into rtld-strcpy.os?
+ If we delete it and remake, 
+ gcc ../sysdeps/x86_64/multiarch/strcpy.S 
+-c    
+-I../include 
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string  
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build  
+-I../sysdeps/unix/sysv/linux/x86_64/64/nptl  
+-I../sysdeps/unix/sysv/linux/x86_64/64  
+-I../nptl/sysdeps/unix/sysv/linux/x86_64  
+-I../nptl/sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86_64  
+-I../sysdeps/unix/sysv/linux/wordsize-64  
+-I../nptl/sysdeps/unix/sysv/linux  
+-I../nptl/sysdeps/pthread  
+-I../sysdeps/pthread  
+-I../ports/sysdeps/unix/sysv/linux  
+-I../sysdeps/unix/sysv/linux  
+-I../sysdeps/gnu  
+-I../sysdeps/unix/inet  
+-I../nptl/sysdeps/unix/sysv  
+-I../ports/sysdeps/unix/sysv  
+-I../sysdeps/unix/sysv  
+-I../sysdeps/unix/x86_64  
+-I../nptl/sysdeps/unix  
+-I../ports/sysdeps/unix  
+-I../sysdeps/unix  -I../sysdeps/posix  
+-I../nptl/sysdeps/x86_64/64  
+-I../sysdeps/x86_64/64  
+-I../sysdeps/x86_64/fpu/multiarch  
+-I../sysdeps/x86_64/fpu  
+-I../sysdeps/x86/fpu  
+-I../sysdeps/x86_64/multiarch  
+-I../nptl/sysdeps/x86_64  
+-I../sysdeps/x86_64  
+-I../sysdeps/x86  
+-I../sysdeps/ieee754/ldbl-96  
+-I../sysdeps/ieee754/dbl-64/wordsize-64  
+-I../sysdeps/ieee754/dbl-64  
+-I../sysdeps/ieee754/flt-32  
+-I../sysdeps/wordsize-64  
+-I../sysdeps/ieee754  
+-I../sysdeps/generic  
+-I../nptl  
+-I../ports  
+-I.. 
+-I../libio 
+-I.   
+-D_LIBC_REENTRANT 
+-include ../include/libc-symbols.h  
+-DPIC -DSHARED     
+-DASSEMBLER  
+-g -Wa,--noexecstack   
+-o /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strcpy.os 
+-MD -MP 
+-MF /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strcpy.os.dt 
+-MT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strcpy.os 
+-DNOT_IN_libc=1 -DIS_IN_rtld=1 -DIN_LIB=rtld
+
+ i.e. we just build it and it comes out right.
+ So what's different between strncpy (rtld-*.os doesn't have it)
+ and strcpy (rtld-*.os does have it)?
+ We build the strncpy like so...
+ gcc ../sysdeps/x86_64/multiarch/strncpy.S 
+ -c    
+-I../include 
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string  
+-I/var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build  
+-I../sysdeps/unix/sysv/linux/x86_64/64/nptl  
+-I../sysdeps/unix/sysv/linux/x86_64/64  
+-I../nptl/sysdeps/unix/sysv/linux/x86_64  
+-I../nptl/sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86  
+-I../sysdeps/unix/sysv/linux/x86_64  
+-I../sysdeps/unix/sysv/linux/wordsize-64  
+-I../nptl/sysdeps/unix/sysv/linux  
+-I../nptl/sysdeps/pthread  
+-I../sysdeps/pthread  
+-I../ports/sysdeps/unix/sysv/linux  
+-I../sysdeps/unix/sysv/linux  
+-I../sysdeps/gnu  
+-I../sysdeps/unix/inet  
+-I../nptl/sysdeps/unix/sysv  
+-I../ports/sysdeps/unix/sysv  
+-I../sysdeps/unix/sysv  
+-I../sysdeps/unix/x86_64  
+-I../nptl/sysdeps/unix  
+-I../ports/sysdeps/unix  
+-I../sysdeps/unix  
+-I../sysdeps/posix  
+-I../nptl/sysdeps/x86_64/64  
+-I../sysdeps/x86_64/64  
+-I../sysdeps/x86_64/fpu/multiarch  
+-I../sysdeps/x86_64/fpu  
+-I../sysdeps/x86/fpu  
+-I../sysdeps/x86_64/multiarch  
+-I../nptl/sysdeps/x86_64  
+-I../sysdeps/x86_64  
+-I../sysdeps/x86  
+-I../sysdeps/ieee754/ldbl-96  
+-I../sysdeps/ieee754/dbl-64/wordsize-64  
+-I../sysdeps/ieee754/dbl-64  
+-I../sysdeps/ieee754/flt-32  
+-I../sysdeps/wordsize-64  
+-I../sysdeps/ieee754  
+-I../sysdeps/generic  
+-I../nptl  
+-I../ports  
+-I.. 
+-I../libio 
+-I.   
+-D_LIBC_REENTRANT 
+-include ../include/libc-symbols.h  
+-DPIC -DSHARED     
+-DASSEMBLER  
+-g 
+-Wa,--noexecstack   
+-o /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strncpy.os 
+-MD -MP 
+-MF /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strncpy.os.dt 
+-MT /var/local/stephen/work/devel/libgerald.hg/contrib/eglibc-2.19/libc/build/string/rtld-strncpy.os 
+-DNOT_IN_libc=1 -DIS_IN_rtld=1 -DIN_LIB=rtld
+
+ ... and the preprocessor emits an empty(save-line#-comments) file! 
+ because multiarch/strcpy.S guards all its assembly by
+ /* Define multiple versions only for the definition in libc.  */
+ #ifndef NOT_IN_libc
+ ...
+ but at the end does
+ #ifndef USE_AS_STRNCPY
+ #include "../strcpy.S"
+ #endif
+ ... i.e. in the non-strncpy case, includes the generic definition.
+ This is PROBABLY a bug in glibc -- i.e. the include logic is broken for the 
+ not-in-libc but using-as-strncpy case.
+ We could fix it perhaps by removing multiarch/ from the includes,
+ so that we go straight to the generic assembly strcpy.
+ But then again, it may have good reason for not using the generic strcpy...
+ indeed, that seems not to support USE_AS_STRNCPY. So, sigh. It's not a bug.
+ We just can't get at a strncpy on x86_64 when not within glibc.

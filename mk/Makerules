@@ -1,0 +1,116 @@
+# We want to build ld-ext.so,
+# an extension of ld.so.
+LD ?= ld
+LD_EXT_SO ?= ld-ext.so
+default: $(LD_EXT_SO)
+
+# Each contrib port should give us 
+# - an archive? some bunch of objects, anyway
+#       ... *also* embodying the source files the user gave us
+# - a version script (optional?)
+# - a soname
+# - some other link options (optional)
+# - some --wrap and --defsym options identifying hook points
+# HMM.
+# That seems a bit fragile.
+# Though assuming it comes out of the linker,
+# I suppose it's not really.
+# Counter-argument: there's nothing we can do here
+# that isn't contrib-dependent, so better to do nothing.
+# On balance, there is debuggability (and pedagogical/exposition) value
+# in building the ld.so right here, even though
+# (in the glibc case) it has just built one for us anyway,
+# and even though repeating the canned build command is a maintenance burden.
+# So let's do that.
+
+EXT_SRC ?= $(wildcard *.c *.s *.S)
+EXT_DYNSYMS ?= 
+
+srcroot := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+
+include $(srcroot)/contrib/config.mk
+ifeq ($(OS_ID) $(PKG_VER),debian glibc-2.24)
+MAKERULES := $(srcroot)/contrib/glibc-2.2x-debian.mk
+endif
+MAKERULES ?= $(srcroot)/contrib/rules.mk
+include $(MAKERULES)
+
+# The Makerules may give us
+# LD_EXT_SO_DYNLIST
+# LD_EXT_SO_VERLIST
+# LD_EXT_SO_LDOPTS          (don't call it "LDFLAGS" because that means -Wl,-blah not -blah)
+# LD_EXT_SO_OBJS
+# LD_EXT_SO_SONAME
+# or alternatively may give us
+# LD_SO_DYNLIST
+# LD_SO_VERLIST
+# LD_SO_LDOPTS
+# LD_SO_OBJS
+# LD_SO_SONAME
+# ... from which we default the former
+ifeq ($(LD_EXT_SO_OBJS),)
+ifeq ($(LD_SO_OBJS),)
+$(error $(MAKERULES) did not define LD_SO_OBJS or LD_EXT_SO_OBJS)
+else
+$(warning $(MAKERULES) did not define LD_EXT_SO_OBJS, so defaulting from LD_SO_OBJS)
+LD_EXT_SO_OBJS := $(LD_SO_OBJS) $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(patsubst %.s,%.o,$(EXT_SRC))))
+endif
+endif
+
+ifeq ($(LD_EXT_SO_LDOPTS),)
+ifeq ($(LD_SO_LDOPTS),)
+$(error $(MAKERULES) did not define LD_SO_LDOPTS or LD_EXT_SO_LDOPTS)
+else
+$(warning $(MAKERULES) did not define LD_EXT_SO_LDOPTS, so defaulting from LD_SO_LDOPTS)
+LD_EXT_SO_LDOPTS := $(LD_SO_LDOPTS)
+endif
+endif
+
+ifeq ($(LD_EXT_SO_VERLIST),)
+ifeq ($(LD_SO_VERLIST),)
+$(error $(MAKERULES) did not define LD_SO_VERLIST or LD_EXT_SO_VERLIST)
+else
+LD_EXT_SO_VERLIST := $(LD_EXT_SO).version # made from $(LD_SO_VERLIST)
+endif
+endif
+
+ifeq ($(LD_EXT_SO_DYNLIST),)
+# even without LD_SO_DYNLIST we are okay -- we can make a dynlist from scratch
+LD_EXT_SO_DYNLIST := $(LD_EXT_SO).dynlist # made from $(LD_SO_DYNLIST)
+endif
+
+ifeq ($(LD_EXT_SO_SONAME),)
+ifeq ($(LD_SO_SONAME),)
+$(error $(MAKERULES) did not define LD_SO_SONAME or LD_EXT_SO_SONAME)
+else
+LD_EXT_SO_SONAME := $(LD_SO_SONAME)
+endif
+endif
+
+# Since we're using a version script, to export symbols
+# we also need to mention them in the version script
+# as well as the dynamic list.
+# HACK: the dynamic list is not allowed to be empty.
+# So if we're not exporting any symbols, add _r_debug
+$(LD_EXT_SO).dynlist: $(LD_SO_DYNLIST) # may be empty
+	(if ! [ -z "_r_debug $(EXT_DYNSYMS)" ]; then \
+	    /bin/echo '{'; for s in _r_debug $(EXT_DYNSYMS); do /bin/echo $$s\;; done; echo '};'; \
+	fi) > "$@" || rm -f "$@"
+$(LD_EXT_SO).version: $(LD_SO_VERLIST) #$(RTLD_OBJ_DIR)/../ld.map
+	(cat "$<"; \
+	if ! [ -z "$(EXT_DYNSYMS)" ]; then /bin/echo Base '{'; \
+	/bin/echo -n 'global:'; \
+	for s in $(EXT_DYNSYMS); do /bin/echo -n ' '$$s';'; done; /bin/echo; \
+	/bin/echo '};'; fi) > "$@" || rm -f "$@"
+
+# The soname is crucial, because libc.so depends on ld-linux.so.
+# If we don't set our soname, the linker doesn't
+# realise that we're the object providing that dependency,
+# so it tries to load another copy of the dynamic linker,
+# with hilarious results.
+$(LD_EXT_SO): $(LD_EXT_SO_OBJS) $(LD_EXT_SO_VERLIST) $(LD_EXT_SO_DYNLIST)
+	$(LD) -nostdlib -shared -o "$@" \
+		$(LD_EXT_SO_OBJS) --version-script=$(LD_EXT_SO_VERLIST) \
+		--dynamic-list $(LD_EXT_SO_DYNLIST) \
+		$(LD_EXT_SO_LDOPTS) \
+		-soname=$(LD_SO_SONAME)

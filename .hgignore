@@ -1,0 +1,12 @@
+syntax: regexp
+^contrib/config\.mk$
+^contrib/.*glibc-2\.[0-9][0-9]
+^contrib/.*\.deb
+^contrib/.*\.dsc
+^contrib/.*\.tar.*
+^contrib/.*\.buildinfo
+^contrib/.*\.changes
+^contrib/.*\.udeb
+^examples/.*/ld-ext\.so$
+^examples/.*/ld-ext\.so\.dynlist$
+^examples/.*/ld-ext\.so\.version$
