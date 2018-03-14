@@ -32,4 +32,7 @@ LD_SO_VERLIST := $(rtld_obj_dir)/../ld.map
 LD_SO_DYNLIST :=
 LD_EXT_SO_OBJS := $(RTLD_OS)
 LD_SO_SONAME := ld-linux-x86-64.so.2
-LD_SO_LDOPTS := --defsym=_begin=0 -z combreloc -z relro --hash-style=both -z defs
+LD_SO_LDOPTS += --defsym=_begin=0 -z combreloc -z relro --hash-style=both -z defs
+
+# This should help make ld.so startup logic more interposable
+CFLAGS-rtld.c += -ffunction-sections

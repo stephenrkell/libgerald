@@ -108,9 +108,17 @@ $(LD_EXT_SO).version: $(LD_SO_VERLIST) #$(RTLD_OBJ_DIR)/../ld.map
 # realise that we're the object providing that dependency,
 # so it tries to load another copy of the dynamic linker,
 # with hilarious results.
-$(LD_EXT_SO): $(LD_EXT_SO_OBJS) $(LD_EXT_SO_VERLIST) $(LD_EXT_SO_DYNLIST)
+$(LD_EXT_SO): $(patsubst %.os,%-hacked.os,$(LD_EXT_SO_OBJS)) $(LD_EXT_SO_VERLIST) $(LD_EXT_SO_DYNLIST)
 	$(LD) -nostdlib -shared -o "$@" \
-		$(LD_EXT_SO_OBJS) --version-script=$(LD_EXT_SO_VERLIST) \
+		$(patsubst %.os,%-hacked.os,$(LD_EXT_SO_OBJS)) \
+		--version-script=$(LD_EXT_SO_VERLIST) \
 		--dynamic-list $(LD_EXT_SO_DYNLIST) \
 		$(LD_EXT_SO_LDOPTS) \
 		-soname=$(LD_SO_SONAME)
+
+# What is this for? For any object in LD_EXT_SO_OBJS, i.e. our *extension* objects
+# to the ld.so, we always try to use the *-hacked version. This lets us do
+# objcopy-like tricks with the basic .o file, directed by Makefile, if we want to.
+# I don't think this facility has been useful so far, but it might yet be.
+%-hacked.os: %.os
+	cp "$<" "$@"

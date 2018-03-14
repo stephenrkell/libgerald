@@ -1,0 +1,9 @@
+#include <unistd.h>
+#include <stdlib.h>
+
+static void init(void) __attribute__((constructor));
+static void init(void)
+{
+	const char str[] = "Hello from very early in dynamic linking of preload.nolang!\n";
+	write(2, str, sizeof str);
+}
