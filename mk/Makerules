@@ -28,14 +28,12 @@ EXT_DYNSYMS ?=
 
 srcroot := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
-include $(srcroot)/contrib/config.mk
-ifeq ($(OS_ID) $(PKG_VER),debian glibc-2.24)
-MAKERULES := $(srcroot)/contrib/glibc-2.2x-debian.mk
-endif
-MAKERULES ?= $(srcroot)/contrib/rules.mk
-include $(MAKERULES)
+-include $(srcroot)/contrib/config.mk
+# config.mk should set up our LIBC_RULES_MK for us -- or else the user should set it
+# Now include it
+include $(LIBC_RULES_MK)
 
-# The Makerules may give us
+# The LIBC_RULES_MK may give us
 # LD_EXT_SO_DYNLIST
 # LD_EXT_SO_VERLIST
 # LD_EXT_SO_LDOPTS          (don't call it "LDFLAGS" because that means -Wl,-blah not -blah)
