@@ -112,11 +112,56 @@ $(LD_EXT_SO): $(patsubst %.os,%-hacked.os,$(LD_EXT_SO_OBJS)) $(LD_EXT_SO_VERLIST
 		--version-script=$(LD_EXT_SO_VERLIST) \
 		--dynamic-list $(LD_EXT_SO_DYNLIST) \
 		$(LD_EXT_SO_LDOPTS) \
-		-soname=$(LD_SO_SONAME)
+		-soname=$(LD_SO_SONAME) --defsym=__ehdr_start=0 # HACK
+#		--wrap __ref__dl_init  \
+#		--defsym _dl_init=__def__dl_init  \
+
+# I've had a problem with the symbol __ehdr_start being undefined in this link.
+# According to csu/libc-start.c,
+#      /* Starting from binutils-2.23, the linker will define the
+#         magic symbol __ehdr_start to point to our own ELF header
+#         if it is visible in a segment that also includes the phdrs.
+#         So we can set up _dl_phdr and _dl_phnum even without any
+#         information from auxv.  */
+# However, either that's not working or the phdrs are not visible.
+# Work around by adding --defsym=__ehdr_start=0.
+# FIXME: I think there's a way to request that the program headers
+# are included -- maybe in the linker script.
+
+# FIXME: the ld.so we generate segfaults at startup. This is true
+# even in the glibc build tree -- running ld.so or ld.so.new
+# does exactly the same thing. It seems to be specific to glibc 2.28 --
+# version 2.27 works OK. Oh, and perhaps it's because 2.27 is the
+# version I currently have. Why was it trying to build 2.28? Could
+# be a stale config.mk, but I don't recall downgrading my libc.
 
 # What is this for? For any object in LD_EXT_SO_OBJS, i.e. our *extension* objects
 # to the ld.so, we always try to use the *-hacked version. This lets us do
 # objcopy-like tricks with the basic .o file, directed by Makefile, if we want to.
 # I don't think this facility has been useful so far, but it might yet be.
-%-hacked.os: %.os
-	cp "$<" "$@"
+%/librtld-hacked-tmp1.os: %/librtld.os
+	ld -r -o $@ --defsym __orig__dl_init=_dl_init $<
+	#objcopy --redefine-sym __orig__dl_init=_dl_init $< $@
+	# PROBLEM: now the *call* to _dl_init is a call to __real_dl_init
+	# Can we replace __real_dl_init and then add it back in?
+
+# We don't use this any more, as the "muldefs places extra at end" turns out not to be reliable
+#replace-extra.o: replace.o
+#	lds=$$(mktemp); /bin/echo -e 'SECTIONS\n{\n  .text : { *(.text) __real__dl_init = SIZEOF(.text); }\n};' > $$lds && \
+#	ld -r -o $@ $+ $$lds
+
+# HMM. The semantics of muldefs are weird.
+# If I put the extra .o *after* the main .os, the first _dl_init definition
+# "wins" and the extra content is simply added, without a symbol name, at the
+# end of the text section.
+# If I put it *before*, it comes first in the file and claims the symbol name.
+# The old content is presumably still there but lacking a symbol name.
+# OK, this is what I might expect and we get
+# things in the wrong order. Can I make the __real_dl_init be a call to the original
+# content? Is that still anywhere in the file?
+%/librtld-hacked.os: replace.o %/librtld-hacked-tmp1.os 
+	#objcopy --unbind-sym _dl_init $< $@
+	ld -r -o $@ -z muldefs $+
+
+#%-hacked.os: %.os
+#	cp "$<" "$@"
