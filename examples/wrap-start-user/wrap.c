@@ -89,31 +89,48 @@ _dl_start_user:\n\
 
  * Important points here are that:
  * _dl_start returns the user's entry point address
- * _dl_init is called and then returns
+ * _dl_init is called and then returns. In fact it's called
+ *      multiple times, once per "worker".
  * _dl_fini is passed to the program entry point, in %rdx.
  *
- * Which of these symbols are wrappable?
+ * Which of these symbols are wrappable with --wrap?
  * _dl_start is defined in the same object
  *       so we'd have to do "unbind"
  * _dl_init is defined in a different object, so seems fair game.
- * BUT combining everything into the .os file first breaks this!
- * In fact, even doing the unbinding doesn't seem to work. I still
- * get a call to __def__dl_init in the hacked .os file, where once
- * was a call to _dl_init. OH. It's because we're in the same
- * *section* as the call, so we don't unbind that reference --
- * it's assumed to be a function-internal self-reference. Even if
- * we compile with -ffunction-sections, by the time we're unbinding
- * the .os file, everything has been mashed into one section.
- * Maybe we need to mess with -z muldefs?
- * */
+ * BUT actually --wrap doesn't work for any of them -- since the
+ * glibc build combines everything into the .os file first, after
+ * which there are no UND references. Even if we unbind, unbinding
+ * ignores section-internal references, and all calls are now
+ * .text-internal. We avoid this by using the replacement technique,
+ * with -z muldefs (see my forthcoming blog post...).
+ *
+ * What about _dl_start? Where is it defined? In rtld.c. But it's
+ * static so there is no relocation record ever generated. Even
+ * if we globalize and unbind the symbol, the reference to it
+ * won't be a symbolic one. The normal solution to this problem
+ * is to compile with -ffunction-sections, but I fear that would
+ * cause havoc for bootstrapping. Probably what we need is some
+ * kind of selective reintroduction of relocation records, by
+ * decoding the instruction stream.
+ */
 
 
 struct link_map;
-void __orig__dl_init (struct link_map *main_map, int argc, char **argv, char **env) __attribute__((weak));
-void __new__dl_init (struct link_map *main_map, int argc, char **argv, char **env)
+void __orig__dl_init (struct link_map *main_map, int argc, char **argv, char **env);
+void __wrap__dl_init (struct link_map *main_map, int argc, char **argv, char **env)
 {
-	const char msg[] = "wrapped!\n";
+	const char msg[] = "wrapped init!\n";
 	write(2, msg, sizeof msg);
-	//return 
 	__orig__dl_init(main_map, argc, argv, env);
+}
+
+/* Wrapping _dl_start is harder because there's no global symbol.
+ * This currently doesn't work. */
+unsigned long long /* ElfW(Addr) */ __orig__dl_start(void *arg);
+unsigned long long /* ElfW(Addr) */ __wrap__dl_start(void *arg)
+{
+	unsigned long long ret = __orig__dl_start(arg);
+	const char msg[] = "wrapped start!\n";
+	write(2, msg, sizeof msg);
+	return ret;
 }

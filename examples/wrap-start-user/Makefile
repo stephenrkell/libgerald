@@ -5,20 +5,18 @@ EXT_DYNSYMS :=
 LD_SO_LDOPTS += $(LD_EXT_SO_LDFLAGS)
 include ../../mk/Makerules
 
-# PROBLEM: we also have to pass these flags to the glibc build process,
+# We also have to pass our these flags to the glibc build process,
 # somehow, else the undefined reference in wrap.o will prevent linking.
-# WAIT.
-# Why is the glibc build including our wrap.o?
-# It shouldn't.
+# Remember: the glibc build including our wrap.o, so we can exploit
+# its magic for pulling all needed libc routines into librtld.os.
+# We expose wrap.o this way so that it is free to use libc routines
+# not in the vanilla libc build,
 # We run the glibc build process as
 # 	LD_SO_LDFLAGS="$(LD_EXT_SO_LDFLAGS)" $(MAKE) VPATH="$(shell pwd)" -C $(LIBC_SRC_DIR)/elf \
 #	    objdir='$(realpath $(rtld_obj_dir)/..)' \
 #	    all-rtld-routines='$(all_rtld_routines)'
 # .. so it's our use of all_rtld_routines (which is a list of .o files without the .o suffix)
 # that is adding to its dependencies.
-# This is so that wrap.c (or whatever)
-# can use libc routines not in the vanilla libc build,
-# hence pulling them into librtld.os
 
 # On glibc-2.28, the makerule which does the ld.so build is
 # $(objpfx)ld.so: $(objpfx)librtld.os $(ld-map)
@@ -40,3 +38,11 @@ include ../../mk/Makerules
 # /usr/local/src/glibc-2.28/build-tree/amd64-libc/elf/librtld.os -Wl,--version-script=/usr/local/src/glibc-2.28/build-tree/amd64-libc/ld.map 
 
 # HMM, OK. Building just librtld.os seems to work now.
+
+# explicitly set the default linker, to avoid polluting with our option hack below (it'd break this)
+%/librtld-hacked.os: LD := $(LD)
+%/librtld-hacked.os: %/librtld.os
+	objcopy --globalize-symbol _dl_start $< && $(LD) -r -o $@ --defsym __orig__dl_init=_dl_init --defsym __orig__dl_start=_dl_start $+
+
+# to ensure our defsym goes first, put it in the LD command itself
+$(LD_EXT_SO): LD := $(LD) -z muldefs --defsym _dl_init=__wrap__dl_init --defsym _dl_start=__wrap__dl_start
