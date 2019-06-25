@@ -1,6 +1,16 @@
 EXT_SRC := wrap.c
 EXT_DYNSYMS := 
 
+# This should help make ld.so startup logic more interposable
+CFLAGS-rtld.c += -ffunction-sections
+export CFLAGS-rtld.c
+# Exporting CFLAGS-rtld.c only works if
+# (1) a shell that doesn't mind funky vars is used, or
+# (2) make sees a command that looks simple enough to run without a shell.
+# Commands with shell metacharacters are always run via a shell, and our
+# libc recursive sub-make is such a command. So HACK: force the use of bash.
+SHELL := /bin/bash
+
 #LD_EXT_SO_LDFLAGS += --wrap _dl_init
 LD_SO_LDOPTS += $(LD_EXT_SO_LDFLAGS)
 include ../../mk/Makerules
@@ -42,7 +52,7 @@ include ../../mk/Makerules
 # explicitly set the default linker, to avoid polluting with our option hack below (it'd break this)
 %/librtld-hacked.os: LD := $(LD)
 %/librtld-hacked.os: %/librtld.os
-	objcopy --globalize-symbol _dl_start $< && $(LD) -r -o $@ --defsym __orig__dl_init=_dl_init --defsym __orig__dl_start=_dl_start $+
+	objcopy --globalize-symbol _dl_start $< && $(LD) -r -o $@ --defsym __orig__dl_start=_dl_start $+
 
 # to ensure our defsym goes first, put it in the LD command itself
-$(LD_EXT_SO): LD := $(LD) -z muldefs --defsym _dl_init=__wrap__dl_init --defsym _dl_start=__wrap__dl_start
+$(LD_EXT_SO): LD := $(LD) -z muldefs --defsym _dl_start=__wrap__dl_start

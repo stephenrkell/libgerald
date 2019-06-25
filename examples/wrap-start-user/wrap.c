@@ -90,7 +90,7 @@ _dl_start_user:\n\
  * Important points here are that:
  * _dl_start returns the user's entry point address
  * _dl_init is called and then returns. In fact it's called
- *      multiple times, once per "worker".
+ *      multiple times, once per "worker"... not ideal.
  * _dl_fini is passed to the program entry point, in %rdx.
  *
  * Which of these symbols are wrappable with --wrap?
@@ -103,18 +103,9 @@ _dl_start_user:\n\
  * ignores section-internal references, and all calls are now
  * .text-internal. We avoid this by using the replacement technique,
  * with -z muldefs (see my forthcoming blog post...).
- *
- * What about _dl_start? Where is it defined? In rtld.c. But it's
- * static so there is no relocation record ever generated. Even
- * if we globalize and unbind the symbol, the reference to it
- * won't be a symbolic one. The normal solution to this problem
- * is to compile with -ffunction-sections, but I fear that would
- * cause havoc for bootstrapping. Probably what we need is some
- * kind of selective reintroduction of relocation records, by
- * decoding the instruction stream.
  */
-
-
+/* Don't do this, now that we can wrap _dl_start. */
+#if 0
 struct link_map;
 void __orig__dl_init (struct link_map *main_map, int argc, char **argv, char **env);
 void __wrap__dl_init (struct link_map *main_map, int argc, char **argv, char **env)
@@ -123,9 +114,17 @@ void __wrap__dl_init (struct link_map *main_map, int argc, char **argv, char **e
 	write(2, msg, sizeof msg);
 	__orig__dl_init(main_map, argc, argv, env);
 }
-
-/* Wrapping _dl_start is harder because there's no global symbol.
- * This currently doesn't work. */
+#endif
+/* What about _dl_start? Where is it defined? In rtld.c. But it's
+ * static so normally there is no relocation record generated. 
+ * However, adding the -ffunction-sections option into the build of
+ * rtld.os ensures that the necessary relocation record is available
+ * at the call from _start to _dl_start. This is not a dynamic
+ * reloc -- it goes away during the ordinary static link, so it's
+ * not too intrusive to force its creation here. Note that when
+ * _dl_start is called, we haven't done bootstrap relocation yet,
+ * so we call the real _dl_start *first*. Once it returns, we can
+ * do what we like. */
 unsigned long long /* ElfW(Addr) */ __orig__dl_start(void *arg);
 unsigned long long /* ElfW(Addr) */ __wrap__dl_start(void *arg)
 {

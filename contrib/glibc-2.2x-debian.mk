@@ -34,7 +34,9 @@ $(RTLD_OS) $(RTLD_OBJ_DIR)/ld.so: do-libc-rebuild
 # the important thing to rebuild is librtld.os
 .PHONY: do-libc-rebuild
 do-libc-rebuild: $(EXT_SRC)
-	LD_SO_LDFLAGS="$(LD_EXT_SO_LDFLAGS)" $(MAKE) VPATH="$(shell pwd)" -C $(LIBC_SRC_DIR)/elf \
+	/usr/bin/env
+	/usr/bin/env LD_SO_LDFLAGS="$(LD_EXT_SO_LDFLAGS)" \
+	    $(MAKE) VPATH="$(shell pwd)" -C $(LIBC_SRC_DIR)/elf \
 	    objdir='$(realpath $(RTLD_OBJ_DIR)/..)' \
 	    all-rtld-routines='$(ALL_RTLD_ROUTINES)' $(RTLD_OBJ_DIR)/librtld.os
 
@@ -43,6 +45,3 @@ LD_SO_DYNLIST :=
 LD_EXT_SO_OBJS := $(RTLD_OS)
 LD_SO_SONAME := ld-linux-x86-64.so.2
 LD_SO_LDOPTS += --defsym=_begin=0 -z combreloc -z relro --hash-style=both -z defs
-
-# This should help make ld.so startup logic more interposable
-CFLAGS-rtld.c += -ffunction-sections
