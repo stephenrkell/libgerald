@@ -1,0 +1,33 @@
+libgerald -- library for generating a dynamic linker
+
+On a modern Unix platform, the dynamic linker (ld.so) bootstraps the
+execution of most user-space code. It's therefore a virtualisation
+vector: control what the dynamic linker does, and you can transparently
+extend or modify the system's behaviour. This is useful in a number of
+overlapping ways:
+
+* a way to prototype operating system extensions
+* a more robust alternative to LD_PRELOAD
+* a transparent way to instrument or augment whole-userland execution
+
+This repository collects recipes and utility code that may be used to
+create new dynamic linkers with new system behaviours.
+
+In contrib/ are recipes for grabbing a build tree that can create a new
+ld.so from some C library, and setting some variables that act as a shim
+layer around that C library's build process. Unfortunately these are
+rather grungy, being quite sensitive to which libc and version thereof
+you are running, and also (because they download source code) to the OS
+distribution. Currently there are rules for building variants of glibc's
+ld.so on Debian-based distributions. Other recipes are welcome, as are
+bug reports and the like.
+
+In mk/ are some relatively generic rules for building a ld.so given one
+of these build trees and the shim variables. Input objects can be passed
+through a 'hack' recipe, and new objects can be added to the link.
+
+In examples/ are some examples of how to use these. Currently only
+examples/wrap-start-user/ is complete. This builds a new ld.so which
+prints a message to stderr immediately after the bootstrap link.
+Unfortunately it currently embeds some glibc-specific details which
+really should be factored into the shim layer.
