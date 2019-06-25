@@ -28,6 +28,6 @@ through a 'hack' recipe, and new objects can be added to the link.
 
 In examples/ are some examples of how to use these. Currently only
 examples/wrap-start-user/ is complete. This builds a new ld.so which
-prints a message to stderr immediately after the bootstrap link.
+prints a message to stderr immediately after the bootstrap relocation.
 Unfortunately it currently embeds some glibc-specific details which
 really should be factored into the shim layer.
